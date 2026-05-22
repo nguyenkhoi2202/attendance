@@ -1,6 +1,6 @@
 {
-  "name": "Company Attendance Check-in Client",
-  "description": "Android-style visual simulator to log in and capture company attendance using custom corporate credentials and WiFi check-in signatures.",
+  "name": "Sovico Attendance Companion",
+  "description": "Android application simulator for company check-in and check-out attendance with proxy API support.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
