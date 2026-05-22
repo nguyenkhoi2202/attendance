@@ -1,0 +1,6 @@
+{
+  "name": "Company Attendance Check-in Client",
+  "description": "Android-style visual simulator to log in and capture company attendance using custom corporate credentials and WiFi check-in signatures.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
