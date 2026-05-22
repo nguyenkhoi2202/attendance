@@ -23,7 +23,7 @@ export default function App() {
   // Account login settings mock data
   const [loginData, setLoginData] = useState<LoginRequestData>({
     username: "khoitn1",
-    Password: "Khanhvy2222@",
+    Password: "",
     OS: "2",
     DeviceID: "iPhone 7 Plus_Apple_iPhone9,4_15.8.5_414x736_1777944534648_5631520931",
     Version: "15.8.5",
