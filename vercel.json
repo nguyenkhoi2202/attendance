@@ -1,0 +1,12 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/proxy/login",
+      "destination": "https://in-prod-svc-peopleapp-api.galaxy.one/sovico/api/user/login"
+    },
+    {
+      "source": "/api/proxy/capture",
+      "destination": "https://in-prod-svc-peopleapp-api.galaxy.one/sovico/api/ticket/attendance/wifi/capture"
+    }
+  ]
+}

@@ -61,6 +61,62 @@ export default function App() {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [isVercelOrStaticMode, setIsVercelOrStaticMode] = useState<boolean>(false);
+
+  // Load logs from browser local storage as a fallback
+  const loadLocalLogs = () => {
+    try {
+      const stored = localStorage.getItem("attendance_pro_logs");
+      if (stored) {
+        setLogs(JSON.parse(stored));
+      } else {
+        setLogs([]);
+      }
+    } catch (e) {
+      console.error("Failed to read local storage logs", e);
+    }
+  };
+
+  // Append logs to browser local storage
+  const addLocalLog = (
+    type: "LOGIN" | "ATTENDANCE",
+    direction: "SENT" | "RECEIVED",
+    url: string,
+    headers: Record<string, string>,
+    body: any,
+    status?: number
+  ) => {
+    try {
+      const newEntry: LogEntry = {
+        id: Math.random().toString(36).substring(2, 9),
+        timestamp: new Date().toISOString(),
+        type,
+        direction,
+        url,
+        headers,
+        body,
+        status
+      };
+
+      const stored = localStorage.getItem("attendance_pro_logs");
+      let currentLogs: LogEntry[] = [];
+      if (stored) {
+        try {
+          currentLogs = JSON.parse(stored);
+        } catch (e) {
+          currentLogs = [];
+        }
+      }
+      currentLogs.unshift(newEntry);
+      if (currentLogs.length > 50) {
+        currentLogs.pop();
+      }
+      localStorage.setItem("attendance_pro_logs", JSON.stringify(currentLogs));
+      setLogs(currentLogs);
+    } catch (e) {
+      console.error("Failed to write offline log entry", e);
+    }
+  };
 
   // Live beautifully formatted real-time states
   const [liveTime, setLiveTime] = useState<string>("09:02:44");
@@ -111,11 +167,23 @@ export default function App() {
     try {
       const resp = await fetch("/api/logs");
       if (resp.ok) {
-        const data = await resp.json();
-        setLogs(data);
+        const contentType = resp.headers.get("content-type") || "";
+        if (contentType.includes("application/json")) {
+          const data = await resp.json();
+          if (Array.isArray(data)) {
+            setLogs(data);
+            setIsVercelOrStaticMode(false);
+            return;
+          }
+        }
       }
+      // If endpoint returns non-JSON (like Vercel index.html fallback or 404), activate Vercel static fallback
+      setIsVercelOrStaticMode(true);
+      loadLocalLogs();
     } catch (e) {
-      console.warn("Retrying logs gateway stream...", e);
+      console.warn("Retrying logs gateway stream -> falling back to local logs...", e);
+      setIsVercelOrStaticMode(true);
+      loadLocalLogs();
     }
   };
 
@@ -128,12 +196,22 @@ export default function App() {
   // Clear proxy history list
   const handleClearLogs = async () => {
     try {
-      const resp = await fetch("/api/logs/clear", { method: "POST" });
-      if (resp.ok) {
+      if (isVercelOrStaticMode) {
+        localStorage.removeItem("attendance_pro_logs");
         setLogs([]);
+      } else {
+        const resp = await fetch("/api/logs/clear", { method: "POST" });
+        if (resp.ok) {
+          setLogs([]);
+        } else {
+          localStorage.removeItem("attendance_pro_logs");
+          setLogs([]);
+        }
       }
     } catch (e) {
       console.error(e);
+      localStorage.removeItem("attendance_pro_logs");
+      setLogs([]);
     }
   };
 
@@ -143,18 +221,52 @@ export default function App() {
     setSuccessMsg(null);
     setErrorMsg(null);
 
+    const requestHeaders = {
+      "Content-Type": "application/json",
+      "deviceid": loginData.DeviceID
+    };
+
+    // Log the initiation of request
+    if (isVercelOrStaticMode) {
+      addLocalLog("LOGIN", "SENT", "/api/proxy/login", requestHeaders, loginData);
+    }
+
     try {
       const resp = await fetch("/api/proxy/login", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "deviceid": loginData.DeviceID
-        },
+        headers: requestHeaders,
         body: JSON.stringify(loginData)
       });
 
-      const data = await resp.json();
-      await fetchLogs();
+      const respText = await resp.text();
+      let data: any = null;
+      let validJson = true;
+      try {
+        data = JSON.parse(respText);
+      } catch (e) {
+        validJson = false;
+      }
+
+      if (isVercelOrStaticMode) {
+        addLocalLog(
+          "LOGIN",
+          "RECEIVED",
+          "/api/proxy/login",
+          {},
+          validJson ? data : { rawResponse: respText.substring(0, 300) },
+          resp.status
+        );
+      } else {
+        await fetchLogs();
+      }
+
+      if (!validJson) {
+        const errorDetail = respText.substring(0, 80);
+        setErrorMsg(
+          `Router returned a non-JSON page (Possible 404 or index HTML fallback). Raw text starts with: "${errorDetail}...". Please make sure your deploy uses the included vercel.json rewrites or check the backend server status.`
+        );
+        return;
+      }
 
       if (resp.ok) {
         let parsedToken = "";
@@ -176,6 +288,9 @@ export default function App() {
       }
     } catch (err: any) {
       setErrorMsg(`Gateway error: ${err.message || "Failed to make connection"}`);
+      if (isVercelOrStaticMode) {
+        addLocalLog("LOGIN", "RECEIVED", "/api/proxy/login", {}, { error: err.message }, 500);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -203,18 +318,51 @@ export default function App() {
       }
     };
 
+    const requestHeaders = {
+      "Content-Type": "application/json",
+      "deviceid": loginData.DeviceID
+    };
+
+    if (isVercelOrStaticMode) {
+      addLocalLog("ATTENDANCE", "SENT", "/api/proxy/capture", requestHeaders, activePayload);
+    }
+
     try {
       const resp = await fetch("/api/proxy/capture", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "deviceid": loginData.DeviceID
-        },
+        headers: requestHeaders,
         body: JSON.stringify(activePayload)
       });
 
-      const data = await resp.json();
-      await fetchLogs();
+      const respText = await resp.text();
+      let data: any = null;
+      let validJson = true;
+      try {
+        data = JSON.parse(respText);
+      } catch (e) {
+        validJson = false;
+      }
+
+      if (isVercelOrStaticMode) {
+        addLocalLog(
+          "ATTENDANCE",
+          "RECEIVED",
+          "/api/proxy/capture",
+          {},
+          validJson ? data : { rawResponse: respText.substring(0, 300) },
+          resp.status
+        );
+      } else {
+        await fetchLogs();
+      }
+
+      if (!validJson) {
+        const errorDetail = respText.substring(0, 80);
+        setErrorMsg(
+          `Router returned a non-JSON page (Possible 404 or index HTML fallback). Raw text starts with: "${errorDetail}...". Please make sure your deploy uses the included vercel.json rewrites or check the backend server status.`
+        );
+        return;
+      }
 
       if (resp.ok) {
         const directionLabel = direction === "i" ? "Check-In" : "Check-Out";
@@ -224,6 +372,9 @@ export default function App() {
       }
     } catch (err: any) {
       setErrorMsg(`Network timeout: ${err.message || "Endpoint not reachable"}`);
+      if (isVercelOrStaticMode) {
+        addLocalLog("ATTENDANCE", "RECEIVED", "/api/proxy/capture", {}, { error: err.message }, 500);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -430,7 +581,14 @@ export default function App() {
               <div className="flex items-center gap-2">
                 <Terminal size={14} className="text-slate-600" />
                 <div>
-                  <h3 className="text-xs font-bold text-slate-700 uppercase">Live REST Gateway Proxy Monitor</h3>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-xs font-bold text-slate-700 uppercase">Live REST Gateway Proxy Monitor</h3>
+                    {isVercelOrStaticMode && (
+                      <span className="text-[9px] font-bold text-amber-700 bg-amber-100 border border-amber-200/60 px-2 py-0.5 rounded animate-pulse">
+                        Vercel/Static Offline Logging Fallback Active
+                      </span>
+                    )}
+                  </div>
                   <p className="text-[9.5px] text-slate-400">Secure real-time network request verification against company endpoints</p>
                 </div>
               </div>
